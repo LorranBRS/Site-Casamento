@@ -7,6 +7,7 @@ const app = document.getElementById('app');
 let currentEditorId = null;
 // Cores escolhidas e ainda nao salvas: sobrevivem quando a tela e redesenhada ao salvar um item
 let themeDraft = null;
+let themeJustSaved = false;
 
 function show(...nodes) {
   app.replaceChildren(...nodes);
@@ -241,6 +242,8 @@ function appearanceCard(wedding) {
     warning.textContent = readable ? '' : 'Atenção: o texto pode ficar difícil de ler com essas cores.';
   }
   sync();
+  if (themeJustSaved) status.textContent = 'Aparência salva.';
+  themeJustSaved = false;
   themeDraft = themeDraft?.id === wedding.id && saved !== wedding.theme ? themeDraft : null;
 
   return el(
@@ -267,9 +270,9 @@ function appearanceCard(wedding) {
         class: 'primary',
         onclick: () => attempt(error, async () => {
           await api(`/api/admin/weddings/${wedding.id}/theme`, { method: 'PUT', body: theme });
-          wedding.theme = structuredClone(theme);
           themeDraft = null;
-          status.textContent = 'Aparência salva.';
+          themeJustSaved = true;
+          await renderEditor(wedding.id);
         }),
       }, 'Salvar aparência'),
       status,
@@ -278,7 +281,7 @@ function appearanceCard(wedding) {
 }
 
 function openPreview(wedding, theme) {
-  const frame = el('iframe', { class: 'preview-frame', title: 'Preview do convite', src: `${inviteHref(wedding.slug)}${inviteHref(wedding.slug).includes('?') ? '&' : '?'}preview=1` });
+  const frame = el('iframe', { class: 'preview-frame', title: 'Preview do convite', src: inviteHref(wedding.slug, true) });
   frame.classList.add('phone');
   const sizeButton = (label, phone) => el('button', {
     type: 'button',

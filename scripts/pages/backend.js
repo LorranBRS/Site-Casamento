@@ -3,8 +3,16 @@
 import { DEFAULT_THEME, PALETTES } from './themes.js';
 
 const KEY = 'site-casamento-demo';
+const SEED_SLUG = 'demo';
 
-export const inviteHref = (slug) => `convite.html?c=${encodeURIComponent(slug)}`;
+// Sem servidor, o link do convite leva os dados junto para abrir em outros aparelhos.
+// Fotos enviadas ficam de fora porque nao cabem em um link.
+export function inviteHref(slug, preview = false) {
+  const base = `convite.html?c=${encodeURIComponent(slug)}`;
+  if (preview) return `${base}&preview=1`;
+  const wedding = slug === SEED_SLUG ? null : db.weddings.find((other) => other.slug === slug);
+  return wedding ? `${base}#d=${encodeShared(wedding)}` : base;
+}
 export const inviteSlugFromUrl = () => new URLSearchParams(location.search).get('c') || 'demo';
 
 const seed = () => ({
@@ -12,7 +20,7 @@ const seed = () => ({
   weddings: [
     {
       id: 1,
-      slug: 'demo',
+      slug: SEED_SLUG,
       partner1: 'Marina',
       partner2: 'Rafael',
       date: '2027-09-18',
@@ -45,11 +53,55 @@ function load() {
 
 // Sem armazenamento (ex.: janela privada) a demonstracao segue funcionando ate recarregar a pagina
 let db = load();
+// O exemplo sempre abre, mesmo que tenha sido excluido no painel deste aparelho
+if (!db.weddings.some((other) => other.slug === SEED_SLUG)) db.weddings.push(seed().weddings[0]);
 function save() {
   try {
     localStorage.setItem(KEY, JSON.stringify(db));
   } catch (error) {
     if (error.name === 'QuotaExceededError') throw fail(400, 'A demonstração guarda poucas fotos no navegador. Exclua alguma antes de enviar outra.');
+  }
+}
+
+function encodeShared(w) {
+  const shared = {
+    partner1: w.partner1,
+    partner2: w.partner2,
+    date: w.date,
+    time: w.time,
+    venue: w.venue,
+    address: w.address,
+    message: w.message,
+    theme: w.theme,
+    cover_image: w.cover_image.startsWith('data:') ? '' : w.cover_image,
+    items: w.items.map(({ id, name, description, price_cents, image_url, link_url }) => ({ id, name, description, price_cents, image_url, link_url })),
+  };
+  const bytes = new TextEncoder().encode(JSON.stringify(shared));
+  return btoa(String.fromCharCode(...bytes)).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
+}
+
+function decodeShared(text) {
+  const bytes = Uint8Array.from(atob(text.replaceAll('-', '+').replaceAll('_', '/')), (char) => char.charCodeAt(0));
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+
+// Abre o convite recebido por link; criado neste aparelho, o original continua valendo
+function importSharedInvite() {
+  const encoded = location.hash.match(/^#d=(.+)$/)?.[1];
+  if (!encoded) return;
+  const slug = inviteSlugFromUrl();
+  const existing = db.weddings.find((other) => other.slug === slug);
+  if (existing && !existing.imported) return;
+  try {
+    const shared = decodeShared(encoded);
+    const answers = new Map(existing?.items.map((item) => [item.id, item.reserved_by]));
+    const items = shared.items.map((item) => ({ ...item, reserved_by: answers.get(item.id) ?? null }));
+    const fields = { ...shared, items, slug, imported: true, published: 1 };
+    if (existing) Object.assign(existing, fields);
+    else db.weddings.push({ link_description: '', id: db.nextId++, photos: [], rsvps: [], ...fields });
+    save();
+  } catch {
+    // Link cortado ou alterado: cai na mensagem de convite nao encontrado
   }
 }
 
@@ -78,7 +130,7 @@ async function route(path, method, body) {
   let match = path.match(/^\/api\/public\/([^/]+)(.*)$/);
   if (match) {
     const w = db.weddings.find((other) => other.slug === decodeURIComponent(match[1]));
-    if (!w) throw fail(404, 'Convite não encontrado.');
+    if (!w) throw fail(404, 'Este link está incompleto ou veio de outro aparelho. Copie o link de novo no painel, em "Link do convite".');
     const rest = match[2];
     if (!rest) {
       const { rsvps, ...visible } = w;
@@ -163,6 +215,8 @@ export async function demoBackend(path, { method = 'GET', body } = {}) {
   if (method !== 'GET') save();
   return structuredClone(result);
 }
+
+importSharedInvite();
 
 document.body.prepend(
   Object.assign(document.createElement('p'), {
