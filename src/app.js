@@ -3,11 +3,12 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
-import { validateGuestName, validateItem, validateWedding } from './validate.js';
+import { detectImageMime, parseTheme, validateGuestName, validateItem, validateRsvp, validateTheme, validateWedding } from './validate.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SESSION_COOKIE = 'sessao';
 const SESSION_MS = 7 * 24 * 60 * 60 * 1000;
+const MAX_PHOTOS = 30;
 
 const sha256 = (value) => createHash('sha256').update(value).digest();
 
@@ -66,6 +67,7 @@ export function createApp({ db, adminPassword, trustProxy = false }) {
   const notFoundPage = readFileSync(join(ROOT, 'views', 'nao-encontrado.html'), 'utf8');
   const loginLimiter = rateLimiter(10, 15 * 60 * 1000);
   const reserveLimiter = rateLimiter(20, 60 * 60 * 1000);
+  const rsvpLimiter = rateLimiter(20, 60 * 60 * 1000);
 
   const sql = {
     wedding: db.prepare('SELECT * FROM weddings WHERE id = ?'),
@@ -75,12 +77,23 @@ export function createApp({ db, adminPassword, trustProxy = false }) {
       FROM weddings w LEFT JOIN items i ON i.wedding_id = w.id
       GROUP BY w.id ORDER BY w.date, w.id`),
     insertWedding: db.prepare(`
-      INSERT INTO weddings (slug, partner1, partner2, date, time, venue, address, link_description, message, cover_image)
-      VALUES (:slug, :partner1, :partner2, :date, :time, :venue, :address, :link_description, :message, :cover_image)`),
+      INSERT INTO weddings (slug, partner1, partner2, date, time, venue, address, link_description, message)
+      VALUES (:slug, :partner1, :partner2, :date, :time, :venue, :address, :link_description, :message)`),
     updateWedding: db.prepare(`
       UPDATE weddings SET partner1 = :partner1, partner2 = :partner2, date = :date, time = :time, venue = :venue,
-        address = :address, link_description = :link_description, message = :message, cover_image = :cover_image
+        address = :address, link_description = :link_description, message = :message
       WHERE id = :id`),
+    rsvps: db.prepare('SELECT * FROM rsvps WHERE wedding_id = ? ORDER BY id DESC'),
+    insertRsvp: db.prepare('INSERT INTO rsvps (wedding_id, name, attending, guests) VALUES (:wedding_id, :name, :attending, :guests)'),
+    deleteRsvp: db.prepare('DELETE FROM rsvps WHERE id = ? AND wedding_id = ?'),
+    setTheme: db.prepare('UPDATE weddings SET theme = ? WHERE id = ?'),
+    setCover: db.prepare('UPDATE weddings SET cover_image = ? WHERE id = ?'),
+    photoIds: db.prepare('SELECT id FROM photos WHERE wedding_id = ? ORDER BY id'),
+    photoOwned: db.prepare('SELECT id FROM photos WHERE id = ? AND wedding_id = ?'),
+    insertPhoto: db.prepare('INSERT INTO photos (wedding_id, mime, data) VALUES (?, ?, ?)'),
+    deletePhoto: db.prepare('DELETE FROM photos WHERE id = ? AND wedding_id = ?'),
+    photoFile: db.prepare(`
+      SELECT p.mime, p.data, w.published FROM photos p JOIN weddings w ON w.id = p.wedding_id WHERE p.id = ?`),
     setPublished: db.prepare('UPDATE weddings SET published = ? WHERE id = ?'),
     deleteWedding: db.prepare('DELETE FROM weddings WHERE id = ?'),
     items: db.prepare('SELECT * FROM items WHERE wedding_id = ? ORDER BY id'),
@@ -113,6 +126,8 @@ export function createApp({ db, adminPassword, trustProxy = false }) {
     return Boolean(hash && sql.session.get(hash, Date.now()));
   };
 
+  const photoView = ({ id }) => ({ id, url: `/fotos/${id}` });
+
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', trustProxy);
@@ -120,7 +135,7 @@ export function createApp({ db, adminPassword, trustProxy = false }) {
   app.use((req, res, next) => {
     res.set({
       'Content-Security-Policy':
-        "default-src 'self'; img-src 'self' https: http: data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+        "default-src 'self'; img-src 'self' https: http: data:; object-src 'none'; base-uri 'none'; frame-ancestors 'self'; form-action 'self'",
       'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'same-origin',
     });
@@ -189,7 +204,13 @@ export function createApp({ db, adminPassword, trustProxy = false }) {
   });
 
   admin.get('/weddings/:weddingId', (req, res) => {
-    res.json({ ...req.wedding, items: sql.items.all(req.wedding.id) });
+    res.json({
+      ...req.wedding,
+      theme: parseTheme(req.wedding.theme),
+      items: sql.items.all(req.wedding.id),
+      photos: sql.photoIds.all(req.wedding.id).map(photoView),
+      rsvps: sql.rsvps.all(req.wedding.id),
+    });
   });
 
   admin.put('/weddings/:weddingId', (req, res) => {
@@ -207,6 +228,47 @@ export function createApp({ db, adminPassword, trustProxy = false }) {
   admin.post('/weddings/:weddingId/publish', (req, res) => {
     sql.setPublished.run(req.body?.published === false ? 0 : 1, req.wedding.id);
     res.json(sql.wedding.get(req.wedding.id));
+  });
+
+  admin.put('/weddings/:weddingId/theme', (req, res) => {
+    const { value, error } = validateTheme(req.body);
+    if (error) return res.status(400).json({ error });
+    sql.setTheme.run(JSON.stringify(value), req.wedding.id);
+    res.json(value);
+  });
+
+  admin.post('/weddings/:weddingId/photos', express.raw({ type: () => true, limit: '6mb' }), (req, res) => {
+    const mime = Buffer.isBuffer(req.body) ? detectImageMime(req.body) : null;
+    if (!mime) return res.status(400).json({ error: 'Envie uma imagem JPG, PNG ou WebP.' });
+    if (sql.photoIds.all(req.wedding.id).length >= MAX_PHOTOS) {
+      return res.status(400).json({ error: `O limite é de ${MAX_PHOTOS} fotos por casamento.` });
+    }
+    const { lastInsertRowid } = sql.insertPhoto.run(req.wedding.id, mime, req.body);
+    res.status(201).json(photoView({ id: Number(lastInsertRowid) }));
+  });
+
+  admin.delete('/weddings/:weddingId/photos/:photoId', (req, res) => {
+    const id = Number(req.params.photoId);
+    sql.deletePhoto.run(id, req.wedding.id);
+    if (req.wedding.cover_image === `/fotos/${id}`) sql.setCover.run('', req.wedding.id);
+    res.json({ ok: true });
+  });
+
+  admin.post('/weddings/:weddingId/cover', (req, res) => {
+    const photoId = req.body?.photo_id ?? null;
+    if (photoId === null) {
+      sql.setCover.run('', req.wedding.id);
+      return res.json({ cover_image: '' });
+    }
+    if (!sql.photoOwned.get(photoId, req.wedding.id)) return res.status(404).json({ error: 'Foto não encontrada.' });
+    const cover = `/fotos/${photoId}`;
+    sql.setCover.run(cover, req.wedding.id);
+    res.json({ cover_image: cover });
+  });
+
+  admin.delete('/weddings/:weddingId/rsvps/:rsvpId', (req, res) => {
+    sql.deleteRsvp.run(Number(req.params.rsvpId), req.wedding.id);
+    res.json({ ok: true });
   });
 
   admin.post('/weddings/:weddingId/items', (req, res) => {
@@ -257,6 +319,8 @@ export function createApp({ db, adminPassword, trustProxy = false }) {
       message: wedding.message,
       cover_image: wedding.cover_image,
       published: Boolean(wedding.published),
+      theme: parseTheme(wedding.theme),
+      photos: sql.photoIds.all(wedding.id).map(photoView),
       // O nome de quem reservou nao e enviado: so o casal ve no painel
       items: sql.items.all(wedding.id).map((item) => ({
         id: item.id,
@@ -283,6 +347,25 @@ export function createApp({ db, adminPassword, trustProxy = false }) {
     res.json({ ok: true });
   });
 
+  app.post('/api/public/:slug/rsvp', (req, res) => {
+    const wedding = sql.weddingBySlug.get(req.params.slug);
+    if (!wedding?.published) return res.status(404).json({ error: 'Convite não encontrado.' });
+    if (!rsvpLimiter.allow(req.ip)) {
+      return res.status(429).json({ error: 'Muitas respostas seguidas. Tente mais tarde.' });
+    }
+    const { value, error } = validateRsvp(req.body);
+    if (error) return res.status(400).json({ error });
+    sql.insertRsvp.run({ ...value, wedding_id: wedding.id });
+    res.status(201).json({ ok: true });
+  });
+
+  app.get('/fotos/:id', (req, res) => {
+    const photo = /^\d+$/.test(req.params.id) ? sql.photoFile.get(Number(req.params.id)) : null;
+    if (!photo || !(photo.published || isAdmin(req))) return res.status(404).type('html').send(notFoundPage);
+    res.set('Cache-Control', 'private, max-age=3600');
+    res.type(photo.mime).send(Buffer.from(photo.data));
+  });
+
   app.get('/c/:slug', (req, res) => {
     const wedding = findVisibleWedding(req);
     if (!wedding) return res.status(404).type('html').send(notFoundPage);
@@ -290,10 +373,13 @@ export function createApp({ db, adminPassword, trustProxy = false }) {
     const couple = `${wedding.partner1} & ${wedding.partner2}`;
     const description =
       wedding.link_description || `Você foi convidado para o casamento de ${couple} em ${formatDateBr(wedding.date)}.`;
+    const coverUrl = wedding.cover_image.startsWith('/')
+      ? `${req.protocol}://${req.get('host')}${wedding.cover_image}`
+      : wedding.cover_image;
     const values = {
       title: escapeHtml(`Casamento de ${couple}`),
       description: escapeHtml(description),
-      og_image: wedding.cover_image ? `<meta property="og:image" content="${escapeHtml(wedding.cover_image)}">` : '',
+      og_image: coverUrl ? `<meta property="og:image" content="${escapeHtml(coverUrl)}">` : '',
       slug: escapeHtml(wedding.slug),
     };
     res.set('Cache-Control', 'no-store');
@@ -310,7 +396,8 @@ export function createApp({ db, adminPassword, trustProxy = false }) {
   });
 
   app.use((err, req, res, next) => {
-    if (err.type === 'entity.parse.failed' || err.type === 'entity.too.large') {
+    if (err.type === 'entity.too.large') return res.status(413).json({ error: 'Arquivo grande demais.' });
+    if (err.type === 'entity.parse.failed') {
       return res.status(400).json({ error: 'Dados inválidos.' });
     }
     console.error(err);

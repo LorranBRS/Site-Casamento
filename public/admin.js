@@ -1,15 +1,19 @@
-import { api, el, formatDateLong, formatPrice } from '/common.js';
+import { inviteHref } from './backend.js';
+import { api, el, formatDateLong, formatPrice, uploadBlob } from './common.js';
+import { contrast, CUSTOM_PALETTE, DESIGNS, PALETTES } from './themes.js';
 
 const app = document.getElementById('app');
 
 let currentEditorId = null;
+// Cores escolhidas e ainda nao salvas: sobrevivem quando a tela e redesenhada ao salvar um item
+let themeDraft = null;
 
 function show(...nodes) {
   app.replaceChildren(...nodes);
   window.scrollTo(0, 0);
 }
 
-const inviteUrl = (wedding) => `${location.origin}/c/${wedding.slug}`;
+const inviteUrl = (wedding) => new URL(inviteHref(wedding.slug), location.href).href;
 
 // Executa uma acao e mostra o erro na tela; sessao expirada volta para o login
 async function attempt(errorBox, action) {
@@ -112,7 +116,7 @@ async function renderEditor(id) {
   const title = wedding ? `${wedding.partner1} & ${wedding.partner2}` : 'Novo casamento';
 
   const sections = [detailsCard(wedding)];
-  if (wedding) sections.push(itemsCard(wedding), inviteCard(wedding), dangerCard(wedding));
+  if (wedding) sections.push(appearanceCard(wedding), photosCard(wedding), itemsCard(wedding), rsvpCard(wedding), inviteCard(wedding), dangerCard(wedding));
 
   // Ao salvar um item a tela e redesenhada: mantem a rolagem no mesmo casamento
   const scroll = id && id === currentEditorId ? window.scrollY : 0;
@@ -131,8 +135,7 @@ function detailsCard(wedding) {
     time: input('time', { type: 'time' }),
     venue: input('venue', { maxlength: 120 }),
     address: input('address', { maxlength: 200 }),
-    cover_image: input('cover_image', { type: 'url', maxlength: 500, placeholder: 'https://...' }),
-    message: el('textarea', { name: 'message', rows: 4, maxlength: 2000, value: wedding?.message ?? '' }),
+    message: el('textarea', { name: 'message', rows: 4, maxlength: 300, value: wedding?.message ?? '' }),
     link_description: el('textarea', { name: 'link_description', rows: 2, maxlength: 200, value: wedding?.link_description ?? '' }),
   };
 
@@ -162,11 +165,253 @@ function detailsCard(wedding) {
       field('Local', inputs.venue),
       field('Endereço', inputs.address),
     ),
-    field('Link da foto de capa', inputs.cover_image, 'Opcional. Endereço de uma imagem já publicada na internet.'),
-    field('Mensagem do convite', inputs.message, 'Aparece na página que os convidados abrem.'),
+    field('Frase ou versículo', inputs.message, 'Aparece no topo do convite. Prefira um texto curto para caber na tela do celular.'),
     field('Descrição do link', inputs.link_description, 'Aparece na prévia quando o link é enviado no WhatsApp e redes sociais. Até 200 caracteres.'),
     error,
     el('button', { class: 'primary' }, wedding ? 'Salvar alterações' : 'Criar e montar a lista'),
+  );
+}
+
+function appearanceCard(wedding) {
+  const saved = themeDraft?.id === wedding.id ? themeDraft.theme : wedding.theme;
+  const theme = structuredClone(saved);
+  const error = errorLine();
+  const status = el('span', { class: 'muted', role: 'status' });
+  const warning = el('p', { class: 'form-warning' });
+  const colorLabels = { bg: 'Fundo', surface: 'Cartões', text: 'Texto', accent: 'Destaque' };
+
+  const colorInputs = Object.fromEntries(
+    Object.keys(colorLabels).map((key) => [
+      key,
+      el('input', {
+        type: 'color',
+        class: 'color-input',
+        value: theme.colors[key],
+        oninput: (event) => {
+          theme.palette = CUSTOM_PALETTE;
+          theme.colors[key] = event.target.value;
+          sync();
+        },
+      }),
+    ]),
+  );
+
+  const paletteButtons = Object.entries(PALETTES).map(([key, palette]) => {
+    const swatches = el('span', { class: 'swatches', 'aria-hidden': 'true' }, Object.values(palette.colors).map((color) => {
+      const swatch = el('span', { class: 'swatch' });
+      swatch.style.background = color;
+      return swatch;
+    }));
+    return [key, el('button', {
+      type: 'button',
+      class: 'choice',
+      onclick: () => {
+        theme.palette = key;
+        theme.colors = { ...palette.colors };
+        sync();
+      },
+    }, swatches, el('span', {}, palette.label))];
+  });
+
+  const designButtons = Object.entries(DESIGNS).map(([key, design]) => [key, el('button', {
+    type: 'button',
+    class: 'choice choice-design',
+    onclick: () => {
+      theme.design = key;
+      sync();
+    },
+  }, el('strong', {}, design.label), el('small', { class: 'muted' }, design.hint))]);
+
+  const headline = el('input', {
+    maxlength: 60,
+    value: theme.headline,
+    oninput: () => {
+      theme.headline = headline.value;
+      sync();
+    },
+  });
+
+  function sync() {
+    themeDraft = { id: wedding.id, theme };
+    status.textContent = '';
+    for (const [key, button] of paletteButtons) button.setAttribute('aria-pressed', String(theme.palette === key));
+    for (const [key, button] of designButtons) button.setAttribute('aria-pressed', String(theme.design === key));
+    for (const [key, node] of Object.entries(colorInputs)) node.value = theme.colors[key];
+    const readable = contrast(theme.colors.text, theme.colors.bg) >= 4.5 && contrast(theme.colors.text, theme.colors.surface) >= 4.5;
+    warning.textContent = readable ? '' : 'Atenção: o texto pode ficar difícil de ler com essas cores.';
+  }
+  sync();
+  themeDraft = themeDraft?.id === wedding.id && saved !== wedding.theme ? themeDraft : null;
+
+  return el(
+    'section',
+    { class: 'card' },
+    el('h2', {}, '2. Aparência do convite'),
+    field('Texto do convite', headline, 'Aparece abaixo dos nomes. Deixe em branco para não mostrar.'),
+    el('div', { class: 'field' }, el('span', { class: 'field-label' }, 'Paleta de cores'), el('div', { class: 'choice-grid' }, paletteButtons.map(([, button]) => button))),
+    el(
+      'div',
+      { class: 'field' },
+      el('span', { class: 'field-label' }, 'Cores personalizadas'),
+      el('div', { class: 'color-row' }, Object.entries(colorLabels).map(([key, label]) => el('label', { class: 'color-field' }, colorInputs[key], label))),
+      warning,
+    ),
+    el('div', { class: 'field' }, el('span', { class: 'field-label' }, 'Design'), el('div', { class: 'choice-grid' }, designButtons.map(([, button]) => button))),
+    error,
+    el(
+      'div',
+      { class: 'actions start' },
+      el('button', { type: 'button', class: 'ghost', onclick: () => openPreview(wedding, theme) }, 'Ver preview'),
+      el('button', {
+        type: 'button',
+        class: 'primary',
+        onclick: () => attempt(error, async () => {
+          await api(`/api/admin/weddings/${wedding.id}/theme`, { method: 'PUT', body: theme });
+          wedding.theme = structuredClone(theme);
+          themeDraft = null;
+          status.textContent = 'Aparência salva.';
+        }),
+      }, 'Salvar aparência'),
+      status,
+    ),
+  );
+}
+
+function openPreview(wedding, theme) {
+  const frame = el('iframe', { class: 'preview-frame', title: 'Preview do convite', src: `${inviteHref(wedding.slug)}${inviteHref(wedding.slug).includes('?') ? '&' : '?'}preview=1` });
+  frame.classList.add('phone');
+  const sizeButton = (label, phone) => el('button', {
+    type: 'button',
+    class: 'ghost small',
+    onclick: () => frame.classList.toggle('phone', phone),
+  }, label);
+  const dialog = el(
+    'dialog',
+    { class: 'preview-dialog' },
+    el(
+      'div',
+      { class: 'preview-bar' },
+      el('strong', {}, 'Preview do convite'),
+      el(
+        'div',
+        { class: 'actions' },
+        sizeButton('Computador', false),
+        sizeButton('Celular', true),
+        el('button', { type: 'button', class: 'primary small', onclick: () => dialog.close() }, 'Fechar'),
+      ),
+    ),
+    el('div', { class: 'preview-stage' }, frame),
+  );
+
+  const onMessage = (event) => {
+    if (event.origin !== location.origin || event.source !== frame.contentWindow || event.data?.type !== 'preview-ready') return;
+    frame.contentWindow.postMessage({ type: 'preview-theme', theme: structuredClone(theme) }, location.origin);
+  };
+  window.addEventListener('message', onMessage);
+  dialog.addEventListener('close', () => {
+    window.removeEventListener('message', onMessage);
+    dialog.remove();
+  });
+  document.body.append(dialog);
+  dialog.showModal();
+}
+
+// Reduz a foto no navegador: fotos de celular costumam passar do limite de envio
+async function shrinkImage(file) {
+  const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  const scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
+  const canvas = el('canvas', { width: Math.round(bitmap.width * scale), height: Math.round(bitmap.height * scale) });
+  const context = canvas.getContext('2d');
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('Não foi possível processar a foto.'))), 'image/jpeg', 0.85);
+  });
+}
+
+function photosCard(wedding) {
+  const error = errorLine();
+  const status = el('span', { class: 'muted', role: 'status' });
+  const grid = el('ul', { class: 'admin-photos' });
+  const base = `/api/admin/weddings/${wedding.id}`;
+
+  function draw() {
+    grid.replaceChildren(
+      ...wedding.photos.map((photo) => {
+        const isCover = wedding.cover_image === photo.url;
+        return el(
+          'li',
+          { class: 'admin-photo' },
+          el('img', { src: photo.url, alt: '' }),
+          isCover && el('span', { class: 'badge on cover-badge' }, 'Capa'),
+          el(
+            'div',
+            { class: 'actions start' },
+            el('button', {
+              type: 'button',
+              class: 'ghost small',
+              onclick: () => attempt(error, async () => {
+                const { cover_image } = await api(`${base}/cover`, { method: 'POST', body: { photo_id: isCover ? null : photo.id } });
+                wedding.cover_image = cover_image;
+                draw();
+              }),
+            }, isCover ? 'Tirar da capa' : 'Usar como capa'),
+            el('button', {
+              type: 'button',
+              class: 'ghost small danger',
+              onclick: () => {
+                if (!confirm('Excluir esta foto?')) return;
+                attempt(error, async () => {
+                  await api(`${base}/photos/${photo.id}`, { method: 'DELETE' });
+                  wedding.photos = wedding.photos.filter((other) => other.id !== photo.id);
+                  if (isCover) wedding.cover_image = '';
+                  draw();
+                });
+              },
+            }, 'Excluir'),
+          ),
+        );
+      }),
+    );
+  }
+  draw();
+
+  const fileInput = el('input', {
+    type: 'file',
+    accept: 'image/*',
+    multiple: true,
+    class: 'file-input',
+    onchange: () => attempt(error, async () => {
+      const files = [...fileInput.files];
+      try {
+        for (const [index, file] of files.entries()) {
+          status.textContent = `Enviando ${index + 1} de ${files.length}...`;
+          let blob;
+          try {
+            blob = await shrinkImage(file);
+          } catch {
+            throw new Error(`Não foi possível abrir "${file.name}". Use uma foto JPG, PNG ou WebP.`);
+          }
+          wedding.photos.push(await uploadBlob(`${base}/photos`, blob));
+          draw();
+        }
+      } finally {
+        status.textContent = '';
+        fileInput.value = '';
+      }
+    }),
+  });
+
+  return el(
+    'section',
+    { class: 'card' },
+    el('h2', {}, '3. Fotos'),
+    el('p', { class: 'muted' }, 'A foto de capa é o fundo do convite (no design floral, fica em um círculo). As demais aparecem em uma galeria abaixo. Até 30 fotos.'),
+    grid,
+    error,
+    el('div', { class: 'actions start' }, el('label', { class: 'button primary' }, 'Adicionar fotos', fileInput), status),
   );
 }
 
@@ -279,7 +524,7 @@ function itemsCard(wedding) {
   };
 
   card.append(
-    el('h2', {}, '2. Lista de presentes'),
+    el('h2', {}, '4. Lista de presentes'),
     wedding.items.length
       ? el('ul', { class: 'item-list' }, wedding.items.map(row))
       : el('p', { class: 'muted' }, 'A lista ainda está vazia. Adicione o primeiro item abaixo.'),
@@ -297,13 +542,13 @@ function inviteCard(wedding) {
       await api(`/api/admin/weddings/${wedding.id}/publish`, { method: 'POST', body: { published } });
       await renderEditor(wedding.id);
     });
-  const preview = el('a', { class: 'button ghost', href: `/c/${wedding.slug}`, target: '_blank', rel: 'noopener' }, wedding.published ? 'Abrir convite' : 'Pré-visualizar');
+  const preview = el('a', { class: 'button ghost', href: inviteHref(wedding.slug), target: '_blank', rel: 'noopener' }, wedding.published ? 'Abrir convite' : 'Pré-visualizar');
 
   if (!wedding.published) {
     return el(
       'section',
       { class: 'card' },
-      el('h2', {}, '3. Link do convite'),
+      el('h2', {}, '6. Link do convite'),
       el('p', { class: 'muted' }, 'Quando a lista estiver pronta, gere o link para enviar aos convidados.'),
       error,
       el('div', { class: 'actions start' }, el('button', { class: 'primary', onclick: () => setPublished(true) }, 'Gerar link do convite'), preview),
@@ -334,7 +579,7 @@ function inviteCard(wedding) {
   return el(
     'section',
     { class: 'card' },
-    el('h2', {}, '3. Link do convite'),
+    el('h2', {}, '6. Link do convite'),
     el('div', { class: 'link-box' }, linkInput, copyButton),
     error,
     el(
@@ -344,6 +589,51 @@ function inviteCard(wedding) {
       preview,
       el('button', { class: 'ghost danger', onclick: () => setPublished(false) }, 'Tirar do ar'),
     ),
+  );
+}
+
+function rsvpCard(wedding) {
+  const error = errorLine();
+  const going = wedding.rsvps.filter((rsvp) => rsvp.attending);
+  const people = going.reduce((total, rsvp) => total + rsvp.guests, 0);
+  const declined = wedding.rsvps.length - going.length;
+
+  return el(
+    'section',
+    { class: 'card' },
+    el('h2', {}, '5. Confirmações de presença'),
+    wedding.rsvps.length
+      ? [
+          el('p', {}, el('strong', {}, `${people} ${people === 1 ? 'pessoa confirmada' : 'pessoas confirmadas'}`), el('span', { class: 'muted' }, ` · ${declined} não ${declined === 1 ? 'poderá' : 'poderão'} ir`)),
+          el(
+            'ul',
+            { class: 'item-list' },
+            wedding.rsvps.map((rsvp) =>
+              el(
+                'li',
+                { class: 'item-row' },
+                el(
+                  'div',
+                  { class: 'item-row-main' },
+                  el('strong', {}, rsvp.name),
+                  el('span', { class: rsvp.attending ? 'badge on' : 'badge' }, rsvp.attending ? `Vai · ${rsvp.guests} ${rsvp.guests === 1 ? 'pessoa' : 'pessoas'}` : 'Não vai'),
+                ),
+                el('button', {
+                  class: 'ghost small danger',
+                  onclick: () => {
+                    if (!confirm(`Excluir a resposta de ${rsvp.name}?`)) return;
+                    attempt(error, async () => {
+                      await api(`/api/admin/weddings/${wedding.id}/rsvps/${rsvp.id}`, { method: 'DELETE' });
+                      await renderEditor(wedding.id);
+                    });
+                  },
+                }, 'Excluir'),
+              ),
+            ),
+          ),
+        ]
+      : el('p', { class: 'muted' }, 'As respostas dos convidados aparecem aqui.'),
+    error,
   );
 }
 

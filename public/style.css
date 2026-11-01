@@ -1,12 +1,17 @@
+@font-face { font-family: 'Great Vibes'; src: url('fonts/great-vibes-latin-400-normal.woff2') format('woff2'); font-display: swap; }
+@font-face { font-family: 'Cormorant Garamond'; src: url('fonts/cormorant-garamond-latin-500-normal.woff2') format('woff2'); font-weight: 500; font-display: swap; }
+@font-face { font-family: 'Cormorant Garamond'; src: url('fonts/cormorant-garamond-latin-600-normal.woff2') format('woff2'); font-weight: 600; font-display: swap; }
+
 :root {
   --bg: #faf6f0;
   --surface: #ffffff;
   --text: #2f2a26;
-  --muted: #6f665d;
-  --line: #e6ddd1;
   --accent: #7c5a3c;
   --accent-text: #ffffff;
-  --accent-soft: #efe5d8;
+  /* Derivadas: acompanham as cores escolhidas para o convite */
+  --muted: color-mix(in srgb, var(--text) 72%, var(--bg));
+  --line: color-mix(in srgb, var(--text) 15%, var(--bg));
+  --accent-soft: color-mix(in srgb, var(--accent) 14%, var(--bg));
   --danger: #a33a2c;
   --serif: Georgia, 'Times New Roman', serif;
   --sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
@@ -30,7 +35,8 @@ img { max-width: 100%; display: block; }
 
 .muted { color: var(--muted); font-size: 0.93rem; }
 .form-error { color: var(--danger); font-size: 0.93rem; }
-.form-error:empty { display: none; }
+.form-error:empty, .form-warning:empty { display: none; }
+.form-warning { color: var(--danger); font-size: 0.88rem; }
 
 /* Botoes */
 button, .button {
@@ -49,7 +55,7 @@ button:focus-visible, .button:focus-visible, a:focus-visible, input:focus-visibl
 }
 button:disabled { opacity: 0.55; cursor: default; }
 .primary { background: var(--accent); color: var(--accent-text); }
-.primary:hover:not(:disabled) { background: #684a30; }
+.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 84%, #000); }
 .ghost { background: transparent; color: var(--text); border-color: var(--line); }
 .ghost:hover:not(:disabled) { background: var(--accent-soft); }
 .danger { color: var(--danger); }
@@ -138,49 +144,243 @@ textarea { resize: vertical; }
 .link-box { display: flex; flex-wrap: wrap; gap: 8px; }
 .link-box input { flex: 1 1 240px; width: auto; min-width: 0; background: var(--bg); }
 
-/* Convite */
-.draft-banner { background: var(--accent); color: var(--accent-text); text-align: center; padding: 8px 16px; font-size: 0.9rem; }
-
-.hero { position: relative; text-align: center; padding: 88px 16px; background: var(--accent-soft); overflow: hidden; }
-.hero.has-cover { color: #fff; background: #2f2a26; }
-.hero-image { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0.55; }
-.hero-content { position: relative; display: flex; flex-direction: column; gap: 12px; align-items: center; }
-.eyebrow { letter-spacing: 0.18em; text-transform: uppercase; font-size: 0.8rem; }
-.hero h1 { font-size: clamp(2.3rem, 8vw, 4.2rem); overflow-wrap: anywhere; }
-.amp { font-style: italic; }
-.hero-date { font-family: var(--serif); font-size: 1.25rem; }
-.countdown { font-size: 0.95rem; opacity: 0.9; }
-
-.invite-section { max-width: 920px; margin: 0 auto; padding: 48px 16px 0; text-align: center; }
-.invite-section h2 { font-size: 1.8rem; margin-bottom: 10px; }
-.message { font-family: var(--serif); font-size: 1.2rem; max-width: 640px; white-space: pre-line; overflow-wrap: anywhere; }
-.venue { display: flex; flex-direction: column; gap: 4px; align-items: center; }
-.venue-name { font-size: 1.1rem; font-weight: 600; }
-.gifts { padding-bottom: 72px; }
-
-.gift-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 16px;
-  margin-top: 24px;
+.choice-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.choice {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--text);
+  padding: 10px 12px;
 }
+.choice:hover { border-color: var(--accent); }
+.choice[aria-pressed='true'] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); background: var(--accent-soft); }
+.swatches { display: flex; gap: 4px; }
+.swatch { width: 22px; height: 22px; border-radius: 50%; border: 1px solid rgb(0 0 0 / 0.15); }
+
+.color-row { display: flex; flex-wrap: wrap; gap: 14px; }
+.color-field { display: flex; align-items: center; gap: 8px; font-size: 0.93rem; }
+.color-input { width: 44px; height: 34px; padding: 2px; cursor: pointer; }
+
+.admin-photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+.admin-photos:empty { display: none; }
+.admin-photo { position: relative; display: flex; flex-direction: column; gap: 6px; }
+.admin-photo img { width: 100%; height: 130px; object-fit: cover; border-radius: 8px; background: var(--accent-soft); }
+.cover-badge { position: absolute; top: 6px; left: 6px; }
+.file-input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+label.button { position: relative; cursor: pointer; }
+label.button:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.preview-dialog { width: 100vw; height: 100dvh; max-width: none; max-height: none; margin: 0; padding: 0; border: 0; background: var(--bg); color: var(--text); }
+.preview-dialog[open] { display: flex; flex-direction: column; }
+.preview-bar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.preview-stage { flex: 1; min-height: 0; display: flex; justify-content: center; background: var(--accent-soft); }
+.preview-frame { width: 100%; height: 100%; border: 0; background: #fff; }
+.preview-frame.phone { width: 390px; max-width: 100%; border-inline: 1px solid var(--line); }
+
+/* Convite: pensado primeiro para a tela do celular */
+body.loading { visibility: hidden; }
+[hidden] { display: none !important; }
+
+.invite { background: var(--accent-soft); --invite-serif: 'Cormorant Garamond', Georgia, serif; --invite-script: 'Great Vibes', 'Cormorant Garamond', cursive; }
+.draft-banner, .demo-banner { background: var(--accent); color: var(--accent-text); text-align: center; padding: 6px 12px; font-size: 0.85rem; }
+.demo-banner { background: #2f2a26; color: #fff; }
+
+.invite-card {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  width: 100%;
+  max-width: 480px;
+  min-height: 100svh;
+  margin: 0 auto;
+  display: flex;
+  color: var(--text);
+  background: var(--surface);
+  font-family: var(--invite-serif);
+}
+.card-body {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 10px;
+  padding: max(28px, env(safe-area-inset-top)) 24px max(20px, env(safe-area-inset-bottom));
+}
+.card-photo { position: absolute; inset: 0; z-index: -2; width: 100%; height: 100%; object-fit: cover; }
+.card-quote { font-size: 1.08rem; line-height: 1.3; font-style: italic; white-space: pre-line; overflow-wrap: anywhere; }
+.card-names { font-family: var(--invite-script); font-weight: 400; font-size: clamp(2.8rem, 14vw, 4rem); line-height: 1.1; overflow-wrap: anywhere; }
+.card-headline { font-size: 1.02rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; line-height: 1.25; }
+.card-date { font-size: 1.45rem; font-weight: 500; line-height: 1.2; display: flex; flex-direction: column; }
+.card-time { font-size: 1.15rem; }
+.card-venue { font-size: 1.1rem; }
+.card-countdown { font-family: var(--sans); font-size: 0.82rem; opacity: 0.85; }
+.card-hint { font-size: 0.9rem; font-style: italic; opacity: 0.85; }
+
+.card-actions { display: flex; justify-content: center; align-items: flex-start; gap: 10px; width: 100%; margin-top: 10px; }
+.action {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 120px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  align-self: stretch;
+  gap: 6px;
+  background: none;
+  border: 0;
+  border-radius: 12px;
+  color: inherit;
+  text-decoration: none;
+  font-family: var(--invite-serif);
+  font-size: 0.98rem;
+  font-weight: 600;
+  line-height: 1.1;
+}
+.action:focus-visible { outline-color: currentColor; }
+.action-circle {
+  width: 68px;
+  height: 68px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--accent);
+  color: var(--accent-text);
+  transition: transform 0.15s;
+}
+.action:active .action-circle { transform: scale(0.94); }
+.icon { width: 34px; height: 34px; background: currentColor; -webkit-mask: var(--icon) center / contain no-repeat; mask: var(--icon) center / contain no-repeat; }
+.icon-presenca { --icon: url('img/presenca.svg'); }
+.icon-local { --icon: url('img/local.svg'); }
+.icon-presente { --icon: url('img/presente.svg'); }
+
+.ornament { display: none; }
+
+/* Design: foto em tela cheia, com letras claras */
+.design-foto .invite-card { background: #24232b; color: #fff; }
+.design-foto .invite-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(to bottom, rgb(0 0 0 / 0.68) 0%, rgb(0 0 0 / 0.32) 30%, rgb(0 0 0 / 0.18) 48%, rgb(0 0 0 / 0.72) 72%, rgb(0 0 0 / 0.88) 100%);
+}
+.design-foto .card-body { text-shadow: 0 1px 6px rgb(0 0 0 / 0.55); }
+.design-foto .card-headline { margin-top: auto; }
+.design-foto .action-circle { background: rgb(0 0 0 / 0.3); color: #fff; border: 2px solid #fff; }
+
+/* Design: foto suave, com letras escuras */
+.design-clara .invite-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(to bottom,
+    color-mix(in srgb, var(--bg) 88%, transparent) 0%,
+    color-mix(in srgb, var(--bg) 62%, transparent) 26%,
+    color-mix(in srgb, var(--bg) 15%, transparent) 44%,
+    color-mix(in srgb, var(--bg) 82%, transparent) 62%,
+    color-mix(in srgb, var(--bg) 92%, transparent) 100%);
+}
+.design-clara .invite-card:not(.has-photo) { background: var(--bg); }
+.design-clara .card-names { margin-top: auto; font-family: var(--invite-serif); font-weight: 500; font-size: clamp(2.3rem, 11vw, 3.2rem); }
+
+/* Design: moldura floral, com foto redonda */
+.design-floral .invite-card { background: var(--surface); }
+.design-floral .invite-card::before {
+  content: '';
+  position: absolute;
+  inset: 12px;
+  z-index: -1;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  outline-offset: -5px;
+  pointer-events: none;
+}
+.design-floral .card-photo {
+  z-index: 1;
+  inset: auto;
+  width: 148px;
+  height: 148px;
+  border-radius: 50%;
+  border: 4px solid color-mix(in srgb, var(--accent) 45%, var(--surface));
+  position: absolute;
+  top: 34px;
+  left: calc(50% - 74px);
+}
+.design-floral .has-photo .card-body { padding-top: 196px; }
+.design-floral .card-body { padding-inline: 34px; padding-bottom: 32px; justify-content: center; }
+.design-floral .card-names { color: var(--accent); }
+.design-floral .ornament {
+  display: block;
+  position: absolute;
+  z-index: -1;
+  width: 130px;
+  height: 130px;
+  background: var(--accent);
+  opacity: 0.75;
+  -webkit-mask: url('img/ornamento.svg') center / contain no-repeat;
+  mask: url('img/ornamento.svg') center / contain no-repeat;
+}
+.design-floral .ornament-top { top: 6px; right: 6px; }
+.design-floral .ornament-bottom { bottom: 6px; left: 6px; transform: rotate(180deg); }
+
+/* Janelas de presenca e presentes */
+.sheet {
+  width: 100%;
+  max-width: 480px;
+  max-height: 88dvh;
+  margin: auto auto 0;
+  padding: 0;
+  border: 0;
+  border-radius: 18px 18px 0 0;
+  background: var(--surface);
+  color: var(--text);
+}
+.sheet[open] { display: flex; flex-direction: column; }
+.sheet::backdrop { background: rgb(0 0 0 / 0.55); }
+.sheet-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px 16px 10px 20px; border-bottom: 1px solid var(--line); }
+.sheet-head h2 { font-family: var(--invite-serif); font-weight: 600; font-size: 1.5rem; }
+.sheet-close { width: 44px; height: 44px; padding: 0; background: none; color: var(--text); font-size: 1.7rem; line-height: 1; }
+.sheet-body { padding: 16px 20px max(24px, env(safe-area-inset-bottom)); overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
+.sheet-form { display: flex; flex-direction: column; gap: 14px; }
+.sheet-done { font-family: var(--invite-serif); font-size: 1.35rem; text-align: center; padding: 24px 0; }
+.answer-options { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.answer-options legend { padding: 0; margin-bottom: 6px; }
+.answer { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 0 12px; border: 1px solid var(--line); border-radius: 8px; }
+.answer:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.answer input { width: 20px; height: 20px; accent-color: var(--accent); }
+
+.gift-grid { display: flex; flex-direction: column; gap: 12px; }
 .gift { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
 .gift img { width: 100%; height: 170px; object-fit: cover; background: var(--accent-soft); }
-.gift-body { padding: 16px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
-.gift h3 { font-size: 1.15rem; overflow-wrap: anywhere; }
+.gift-body { padding: 14px; display: flex; flex-direction: column; gap: 6px; }
+.gift h3 { font-family: var(--invite-serif); font-weight: 600; font-size: 1.25rem; overflow-wrap: anywhere; }
 .gift-price { font-weight: 600; }
-.gift-footer { margin-top: auto; padding-top: 10px; }
+.gift-footer { padding-top: 8px; }
 .gift.reserved img { opacity: 0.5; }
 .gift.reserved h3 { color: var(--muted); }
+.badge { white-space: normal; }
 .reserve-form { display: flex; flex-direction: column; gap: 6px; }
 .reserve-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .reserve-row input { flex: 1 1 100%; }
+
+.card-gallery { max-width: 480px; margin: 0 auto; padding: 32px 16px 48px; text-align: center; background: var(--bg); }
+.card-gallery h2 { font-family: var(--invite-script); font-size: 2.4rem; margin-bottom: 14px; }
+.photo-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.photo-grid img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; background: var(--accent-soft); }
 
 .empty-page { text-align: center; padding: 96px 16px; display: flex; flex-direction: column; gap: 10px; }
 .empty-page h1 { font-size: 2rem; }
 
 @media (max-width: 560px) {
   .grid-2 { grid-template-columns: minmax(0, 1fr); }
-  .hero { padding: 64px 16px; }
 }

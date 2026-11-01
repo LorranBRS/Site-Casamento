@@ -1,0 +1,2 @@
+Great Vibes e Cormorant Garamond: SIL Open Font License 1.1 (https://openfontlicense.org)
+Arquivos obtidos dos pacotes @fontsource/great-vibes e @fontsource/cormorant-garamond.

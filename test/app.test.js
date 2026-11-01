@@ -109,3 +109,70 @@ test('logout encerra a sessao', async () => {
   await call('/api/logout', { method: 'POST' });
   assert.equal((await call('/api/admin/weddings')).status, 401);
 });
+
+test('aparencia, fotos e capa', async () => {
+  await call('/api/login', { method: 'POST', body: { password: PASSWORD } }).then((res) => {
+    cookie = res.headers.get('set-cookie').split(';')[0];
+  });
+  const wedding = json(await call('/api/admin/weddings', { method: 'POST', body: weddingBody }));
+  const admin = `/api/admin/weddings/${wedding.id}`;
+
+  // Tema: padrao, recusa valores perigosos, salva e aparece para o convidado
+  assert.equal(json(await call(admin)).theme.design, 'foto');
+  const colors = { bg: '#000000', surface: '#111111', text: '#ffffff', accent: '#ff0000' };
+  const theme = { palette: 'personalizada', design: 'floral', headline: 'Sim!', colors };
+  assert.equal((await call(`${admin}/theme`, { method: 'PUT', body: { ...theme, colors: { ...colors, bg: 'red;}' } } })).status, 400);
+  assert.equal((await call(`${admin}/theme`, { method: 'PUT', body: { ...theme, design: '__proto__' } })).status, 400);
+  assert.equal((await call(`${admin}/theme`, { method: 'PUT', body: theme })).status, 200);
+
+  // Upload: confere o conteudo do arquivo e exige login
+  const upload = (bytes, headers = { Cookie: cookie }) =>
+    fetch(`${base}${admin}/photos`, { method: 'POST', headers: { 'Content-Type': 'image/jpeg', ...headers }, body: bytes });
+  const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(20)]);
+  assert.equal((await upload(jpeg, {})).status, 401);
+  assert.equal((await upload(Buffer.from('<svg onload="alert(1)"></svg>'))).status, 400);
+  const photo = await (await upload(jpeg)).json();
+
+  // Foto de rascunho so aparece para o administrador
+  assert.equal((await call(photo.url, { auth: false })).status, 404);
+  const asAdmin = await call(photo.url);
+  assert.equal(asAdmin.status, 200);
+  assert.equal(asAdmin.headers.get('content-type'), 'image/jpeg');
+
+  await call(`${admin}/publish`, { method: 'POST', body: {} });
+  assert.equal((await call(photo.url, { auth: false })).status, 200);
+
+  await call(`${admin}/cover`, { method: 'POST', body: { photo_id: photo.id } });
+  const publicData = json(await call(`/api/public/${wedding.slug}`, { auth: false }));
+  assert.equal(publicData.theme.headline, 'Sim!');
+  assert.equal(publicData.cover_image, photo.url);
+  assert.deepEqual(publicData.photos, [photo]);
+  assert.match((await call(`/c/${wedding.slug}`, { auth: false })).text, /og:image" content="http:\/\/127\.0\.0\.1:\d+\/fotos\//);
+
+  // Foto de outro casamento nao vira capa; excluir a capa limpa o convite
+  const other = json(await call('/api/admin/weddings', { method: 'POST', body: weddingBody }));
+  assert.equal((await call(`/api/admin/weddings/${other.id}/cover`, { method: 'POST', body: { photo_id: photo.id } })).status, 404);
+  await call(`${admin}/photos/${photo.id}`, { method: 'DELETE' });
+  assert.equal(json(await call(admin)).cover_image, '');
+});
+
+test('confirmacao de presenca', async () => {
+  const wedding = json(await call('/api/admin/weddings', { method: 'POST', body: weddingBody }));
+  const admin = `/api/admin/weddings/${wedding.id}`;
+  const rsvp = (body) => call(`/api/public/${wedding.slug}/rsvp`, { method: 'POST', body, auth: false });
+
+  assert.equal((await rsvp({ name: 'Bia', attending: true, guests: 2 })).status, 404);
+  await call(`${admin}/publish`, { method: 'POST', body: {} });
+
+  assert.equal((await rsvp({ name: 'Bia', attending: true, guests: 0 })).status, 400);
+  assert.equal((await rsvp({ name: 'Bia', attending: 'sim', guests: 2 })).status, 400);
+  assert.equal((await rsvp({ name: 'Bia', attending: true, guests: 2 })).status, 201);
+  assert.equal((await rsvp({ name: 'Caio', attending: false })).status, 201);
+
+  const { rsvps } = json(await call(admin));
+  assert.deepEqual(rsvps.map((r) => [r.name, r.attending, r.guests]), [['Caio', 0, 0], ['Bia', 1, 2]]);
+  assert.ok(!(await call(`/api/public/${wedding.slug}`, { auth: false })).text.includes('Caio'));
+
+  await call(`${admin}/rsvps/${rsvps[0].id}`, { method: 'DELETE' });
+  assert.equal(json(await call(admin)).rsvps.length, 1);
+});

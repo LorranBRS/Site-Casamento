@@ -27,3 +27,9 @@ npm test
 
 Para os convidados abrirem o link, o site precisa estar em um servidor com disco persistente e HTTPS.
 Defina `ADMIN_PASSWORD` e `TRUST_PROXY=1` no servidor.
+
+## Demonstração no GitHub Pages
+
+O GitHub Pages só hospeda arquivos estáticos e não roda o servidor. Por isso, cada push na branch `main`
+publica uma demonstração gerada por `npm run build:pages`, que guarda os dados no navegador de quem a abre.
+Ela serve para avaliar o visual e o funcionamento, mas não para receber respostas reais de convidados.

@@ -11,7 +11,8 @@ if (!ADMIN_PASSWORD) {
 const app = createApp({
   db: openDb(DB_PATH),
   adminPassword: ADMIN_PASSWORD,
-  trustProxy: TRUST_PROXY === '1',
+  // Numero de proxies na frente do site: o IP real vem do ultimo salto, que nao pode ser forjado
+  trustProxy: TRUST_PROXY === '1' ? 1 : false,
 });
 
 app.listen(PORT, () => console.log(`Painel em http://localhost:${PORT}/admin`));

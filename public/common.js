@@ -1,3 +1,5 @@
+import { demoBackend } from './backend.js';
+
 // Cria elementos sempre via textContent/atributos, nunca innerHTML, para que
 // nada digitado pelo usuario ou convidado seja interpretado como HTML.
 export function el(tag, props = {}, ...children) {
@@ -16,6 +18,7 @@ export function el(tag, props = {}, ...children) {
 }
 
 export async function api(path, { method = 'GET', body } = {}) {
+  if (demoBackend) return demoBackend(path, { method, body });
   let response;
   try {
     response = await fetch(path, {
@@ -29,6 +32,16 @@ export async function api(path, { method = 'GET', body } = {}) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw Object.assign(new Error(data.error ?? 'Algo deu errado.'), { status: response.status });
+  }
+  return data;
+}
+
+export async function uploadBlob(path, blob) {
+  if (demoBackend) return demoBackend(path, { method: 'POST', body: blob });
+  const response = await fetch(path, { method: 'POST', headers: { 'Content-Type': blob.type }, body: blob });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw Object.assign(new Error(data.error ?? 'Não foi possível enviar a foto.'), { status: response.status });
   }
   return data;
 }

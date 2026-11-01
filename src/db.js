@@ -38,10 +38,33 @@ export function openDb(path) {
     );
     CREATE INDEX IF NOT EXISTS items_wedding ON items(wedding_id);
 
+    CREATE TABLE IF NOT EXISTS photos (
+      id         INTEGER PRIMARY KEY,
+      wedding_id INTEGER NOT NULL REFERENCES weddings(id) ON DELETE CASCADE,
+      mime       TEXT NOT NULL,
+      data       BLOB NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS photos_wedding ON photos(wedding_id);
+
+    CREATE TABLE IF NOT EXISTS rsvps (
+      id         INTEGER PRIMARY KEY,
+      wedding_id INTEGER NOT NULL REFERENCES weddings(id) ON DELETE CASCADE,
+      name       TEXT NOT NULL,
+      attending  INTEGER NOT NULL,
+      guests     INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS rsvps_wedding ON rsvps(wedding_id);
+
     CREATE TABLE IF NOT EXISTS sessions (
       token_hash TEXT PRIMARY KEY,
       expires_at INTEGER NOT NULL
     );
   `);
+
+  // Bancos criados antes da personalizacao nao tem esta coluna
+  const columns = db.prepare('PRAGMA table_info(weddings)').all().map((column) => column.name);
+  if (!columns.includes('theme')) db.exec("ALTER TABLE weddings ADD COLUMN theme TEXT NOT NULL DEFAULT ''");
+
   return db;
 }

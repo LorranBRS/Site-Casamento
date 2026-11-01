@@ -1,19 +1,92 @@
-import { api, el, formatDateLong, formatPrice, parseDate } from '/common.js';
+import { inviteSlugFromUrl } from './backend.js';
+import { api, el, formatDateLong, formatPrice, parseDate } from './common.js';
+import { applyTheme } from './themes.js';
 
 const app = document.getElementById('app');
-const slug = document.body.dataset.slug;
+const slug = document.body.dataset.slug || inviteSlugFromUrl();
 let justReservedId = null;
 
-function countdownText(wedding) {
-  const target = parseDate(wedding.date, wedding.time);
-  const days = Math.ceil((target - new Date()) / 86_400_000);
-  if (days > 1) return `Faltam ${days} dias`;
-  if (days === 1) return 'Falta 1 dia';
-  if (days === 0) return 'É hoje!';
-  return null;
+// Dentro do preview do painel: mostra as cores ainda nao salvas e nao aceita respostas
+const previewMode = window.parent !== window && new URLSearchParams(location.search).has('preview');
+let draftTheme = null;
+let wedding = null;
+
+const canAnswer = () => wedding.published && !previewMode;
+
+function openSheet(title, ...content) {
+  const dialog = el(
+    'dialog',
+    { class: 'sheet', 'aria-label': title },
+    el(
+      'div',
+      { class: 'sheet-head' },
+      el('h2', {}, title),
+      el('button', { type: 'button', class: 'sheet-close', 'aria-label': 'Fechar', onclick: () => dialog.close() }, '×'),
+    ),
+    el('div', { class: 'sheet-body' }, content),
+  );
+  dialog.addEventListener('close', () => dialog.remove());
+  document.body.append(dialog);
+  dialog.showModal();
+  return dialog;
 }
 
-function reserveForm(item, wedding, close) {
+// ---------- Confirmar presenca ----------
+
+function openRsvp() {
+  const name = el('input', { required: true, minlength: 2, maxlength: 80, autocomplete: 'name' });
+  const guests = el('input', { type: 'number', min: 1, max: 20, value: 1, required: true, inputmode: 'numeric' });
+  const guestsField = el('label', { class: 'field' }, el('span', { class: 'field-label' }, 'Quantas pessoas, contando com você?'), guests);
+  const error = el('p', { class: 'form-error', role: 'alert' });
+  const yes = el('input', { type: 'radio', name: 'attending', checked: true, onchange: syncGuests });
+  const no = el('input', { type: 'radio', name: 'attending', onchange: syncGuests });
+  const submit = el('button', { class: 'primary', disabled: !canAnswer() }, canAnswer() ? 'Enviar resposta' : 'Indisponível na pré-visualização');
+
+  function syncGuests() {
+    guestsField.hidden = no.checked;
+    guests.disabled = no.checked;
+  }
+
+  const form = el(
+    'form',
+    {
+      class: 'sheet-form',
+      onsubmit: async (event) => {
+        event.preventDefault();
+        submit.disabled = true;
+        error.textContent = '';
+        try {
+          await api(`/api/public/${slug}/rsvp`, {
+            method: 'POST',
+            body: { name: name.value, attending: yes.checked, guests: yes.checked ? Number(guests.value) : 0 },
+          });
+          form.replaceChildren(
+            el('p', { class: 'sheet-done' }, yes.checked ? 'Presença confirmada. Esperamos por você!' : 'Resposta enviada. Obrigado por avisar!'),
+          );
+        } catch (failure) {
+          error.textContent = failure.message;
+          submit.disabled = false;
+        }
+      },
+    },
+    el('label', { class: 'field' }, el('span', { class: 'field-label' }, 'Seu nome'), name),
+    el(
+      'fieldset',
+      { class: 'answer-options' },
+      el('legend', { class: 'field-label' }, 'Você vai ao casamento?'),
+      el('label', { class: 'answer' }, yes, 'Sim, vou comparecer'),
+      el('label', { class: 'answer' }, no, 'Não poderei ir'),
+    ),
+    guestsField,
+    error,
+    submit,
+  );
+  openSheet('Confirmar presença', form);
+}
+
+// ---------- Presentes ----------
+
+function reserveForm(item, close, redraw) {
   const name = el('input', { required: true, minlength: 2, maxlength: 80, placeholder: 'Seu nome', 'aria-label': 'Seu nome', autocomplete: 'name' });
   const error = el('p', { class: 'form-error', role: 'alert' });
   const submit = el('button', { class: 'primary small' }, 'Confirmar');
@@ -28,12 +101,15 @@ function reserveForm(item, wedding, close) {
         try {
           await api(`/api/public/${slug}/items/${item.id}/reserve`, { method: 'POST', body: { name: name.value } });
           justReservedId = item.id;
-          await load();
         } catch (failure) {
-          error.textContent = failure.message;
-          submit.disabled = false;
-          if (failure.status === 409) setTimeout(load, 1800);
+          if (failure.status !== 409) {
+            error.textContent = failure.message;
+            submit.disabled = false;
+            return;
+          }
         }
+        wedding = await api(`/api/public/${slug}`);
+        redraw();
       },
     },
     el('div', { class: 'reserve-row' }, name, submit, el('button', { type: 'button', class: 'ghost small', onclick: close }, 'Cancelar')),
@@ -43,11 +119,11 @@ function reserveForm(item, wedding, close) {
   return form;
 }
 
-function giftCard(item, wedding) {
+function giftCard(item, redraw) {
   const footer = el('div', { class: 'gift-footer' });
   const showButton = () => {
     footer.replaceChildren(
-      el('button', { class: 'primary small', disabled: !wedding.published, onclick: () => footer.replaceChildren(reserveForm(item, wedding, showButton)) }, 'Vou presentear'),
+      el('button', { class: 'primary small', disabled: !canAnswer(), onclick: () => footer.replaceChildren(reserveForm(item, showButton, redraw)) }, 'Vou presentear'),
     );
   };
   if (item.id === justReservedId) footer.append(el('span', { class: 'badge on' }, 'Reservado por você. Obrigado!'));
@@ -70,44 +146,64 @@ function giftCard(item, wedding) {
   );
 }
 
-function render(wedding) {
-  const countdown = countdownText(wedding);
-  const hero = el(
-    'header',
-    { class: wedding.cover_image ? 'hero has-cover' : 'hero' },
-    wedding.cover_image && el('img', { class: 'hero-image', src: wedding.cover_image, alt: '', referrerpolicy: 'no-referrer' }),
+function openGifts() {
+  const list = el('ul', { class: 'gift-grid' });
+  const redraw = () => list.replaceChildren(...wedding.items.map((item) => giftCard(item, redraw)));
+  redraw();
+  openSheet('Lista de presentes', el('p', { class: 'muted' }, 'Escolha um item e reserve para que ninguém compre o mesmo. A compra é feita por você.'), list);
+}
+
+// ---------- Convite ----------
+
+function actionContent(label, icon) {
+  return [el('span', { class: 'action-label' }, label), el('span', { class: 'action-circle' }, el('span', { class: `icon icon-${icon}` }))];
+}
+
+function render() {
+  const theme = draftTheme ?? wedding.theme;
+  applyTheme(theme);
+  const gallery = wedding.photos.filter((photo) => photo.url !== wedding.cover_image);
+  const place = [wedding.venue, wedding.address].filter(Boolean).join(', ');
+  const mapsUrl = place && `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(place)}`;
+  const time = wedding.time && `às ${wedding.time.replace(':', 'h')}`;
+  const daysLeft = Math.ceil((parseDate(wedding.date, wedding.time) - new Date()) / 86_400_000);
+
+  const card = el(
+    'article',
+    { class: wedding.cover_image ? 'invite-card has-photo' : 'invite-card' },
+    wedding.cover_image && el('img', { class: 'card-photo', src: wedding.cover_image, alt: `${wedding.partner1} e ${wedding.partner2}` }),
+    el('span', { class: 'ornament ornament-top', 'aria-hidden': 'true' }),
+    el('span', { class: 'ornament ornament-bottom', 'aria-hidden': 'true' }),
     el(
       'div',
-      { class: 'hero-content' },
-      el('p', { class: 'eyebrow' }, 'Vamos nos casar'),
-      el('h1', {}, wedding.partner1, el('span', { class: 'amp' }, ' & '), wedding.partner2),
-      el('p', { class: 'hero-date' }, formatDateLong(wedding.date), wedding.time && ` às ${wedding.time.replace(':', 'h')}`),
-      countdown && el('p', { class: 'countdown' }, countdown),
+      { class: 'card-body' },
+      wedding.message && el('p', { class: 'card-quote' }, wedding.message),
+      el('h1', { class: 'card-names' }, wedding.partner1, el('span', { class: 'card-and' }, ' & '), wedding.partner2),
+      theme.headline && el('p', { class: 'card-headline' }, theme.headline),
+      el('p', { class: 'card-date' }, formatDateLong(wedding.date), time && el('span', { class: 'card-time' }, time)),
+      wedding.venue && el('p', { class: 'card-venue' }, wedding.venue),
+      daysLeft > 0 && el('p', { class: 'card-countdown' }, daysLeft === 1 ? 'Falta 1 dia' : `Faltam ${daysLeft} dias`),
+      el(
+        'nav',
+        { class: 'card-actions', 'aria-label': 'Ações do convite' },
+        el('button', { type: 'button', class: 'action', onclick: openRsvp }, actionContent('Confirmar presença', 'presenca')),
+        mapsUrl && el('a', { class: 'action', href: mapsUrl, target: '_blank', rel: 'noopener noreferrer' }, actionContent('Local', 'local')),
+        wedding.items.length > 0 && el('button', { type: 'button', class: 'action', onclick: openGifts }, actionContent('Presentes', 'presente')),
+      ),
+      el('p', { class: 'card-hint' }, 'Toque nos ícones acima para interagir'),
     ),
   );
 
-  const mapsUrl = wedding.address && `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(wedding.address)}`;
-
   const sections = [
-    !wedding.published && el('p', { class: 'draft-banner' }, 'Pré-visualização: este convite ainda não está no ar.'),
-    hero,
-    wedding.message && el('section', { class: 'invite-section message' }, wedding.message),
-    (wedding.venue || wedding.address) &&
+    (!wedding.published || previewMode) &&
+      el('p', { class: 'draft-banner' }, wedding.published ? 'Pré-visualização: respostas desativadas.' : 'Pré-visualização: este convite ainda não está no ar.'),
+    card,
+    gallery.length > 0 &&
       el(
         'section',
-        { class: 'invite-section venue' },
-        el('h2', {}, 'Onde'),
-        wedding.venue && el('p', { class: 'venue-name' }, wedding.venue),
-        wedding.address && el('p', { class: 'muted' }, wedding.address),
-        mapsUrl && el('a', { href: mapsUrl, target: '_blank', rel: 'noopener noreferrer' }, 'Ver no mapa'),
-      ),
-    wedding.items.length > 0 &&
-      el(
-        'section',
-        { class: 'invite-section gifts' },
-        el('h2', {}, 'Lista de presentes'),
-        el('p', { class: 'muted' }, 'Escolha um item e reserve para que ninguém compre o mesmo. A compra é feita por você.'),
-        el('ul', { class: 'gift-grid' }, wedding.items.map((item) => giftCard(item, wedding))),
+        { class: 'card-gallery' },
+        el('h2', {}, 'Nossos momentos'),
+        el('ul', { class: 'photo-grid' }, gallery.map((photo) => el('li', {}, el('img', { src: photo.url, alt: 'Foto do casal', loading: 'lazy' })))),
       ),
   ];
   app.replaceChildren(...sections.filter(Boolean));
@@ -115,10 +211,21 @@ function render(wedding) {
 
 async function load() {
   try {
-    render(await api(`/api/public/${slug}`));
+    wedding = await api(`/api/public/${slug}`);
+    render();
+    if (previewMode) window.parent.postMessage({ type: 'preview-ready' }, location.origin);
   } catch (error) {
-    app.replaceChildren(el('main', { class: 'empty-page' }, el('h1', {}, 'Não foi possível abrir o convite'), el('p', {}, error.message)));
+    app.replaceChildren(el('div', { class: 'empty-page' }, el('h1', {}, 'Não foi possível abrir o convite'), el('p', {}, error.message)));
   }
+  document.body.classList.remove('loading');
+}
+
+if (previewMode) {
+  window.addEventListener('message', (event) => {
+    if (event.origin !== location.origin || event.source !== window.parent || event.data?.type !== 'preview-theme') return;
+    draftTheme = event.data.theme;
+    if (wedding) render();
+  });
 }
 
 load();
