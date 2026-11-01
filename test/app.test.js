@@ -105,6 +105,22 @@ test('item de outro casamento nao pode ser reservado pelo link errado', async ()
   assert.equal(res.status, 409);
 });
 
+test('novo link substitui o anterior e mantem os dados', async () => {
+  const wedding = json(await call('/api/admin/weddings', { method: 'POST', body: weddingBody }));
+  const admin = `/api/admin/weddings/${wedding.id}`;
+  await call(`${admin}/publish`, { method: 'POST', body: {} });
+  await call(`${admin}/items`, { method: 'POST', body: { name: 'Taças' } });
+
+  const renewed = json(await call(`${admin}/new-link`, { method: 'POST' }));
+  assert.notEqual(renewed.slug, wedding.slug);
+  assert.equal(renewed.published, 1);
+  assert.equal((await call(`/c/${wedding.slug}`, { auth: false })).status, 404);
+  assert.equal((await call(`/c/${renewed.slug}`, { auth: false })).status, 200);
+  assert.equal(json(await call(`/api/public/${renewed.slug}`, { auth: false })).items.length, 1);
+
+  assert.equal((await fetch(`${base}${admin}/new-link`, { method: 'POST' })).status, 401);
+});
+
 test('logout encerra a sessao', async () => {
   await call('/api/logout', { method: 'POST' });
   assert.equal((await call('/api/admin/weddings')).status, 401);

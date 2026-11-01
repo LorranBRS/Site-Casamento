@@ -8,6 +8,7 @@ let currentEditorId = null;
 // Cores escolhidas e ainda nao salvas: sobrevivem quando a tela e redesenhada ao salvar um item
 let themeDraft = null;
 let themeJustSaved = false;
+let linkJustRenewed = false;
 
 function show(...nodes) {
   app.replaceChildren(...nodes);
@@ -577,13 +578,31 @@ function inviteCard(wedding) {
     },
     'Copiar link',
   );
+  const newLinkButton = el(
+    'button',
+    {
+      class: 'ghost',
+      onclick: () => {
+        if (!confirm('Gerar um novo link? O link anterior deixa de valer: envie o novo aos convidados.')) return;
+        attempt(error, async () => {
+          await api(`/api/admin/weddings/${wedding.id}/new-link`, { method: 'POST' });
+          linkJustRenewed = true;
+          await renderEditor(wedding.id);
+        });
+      },
+    },
+    'Gerar novo link',
+  );
+  const status = el('p', { class: 'muted', role: 'status' }, linkJustRenewed ? 'Novo link gerado. Copie e envie este.' : '');
+  linkJustRenewed = false;
   const whatsapp = `https://wa.me/?text=${encodeURIComponent(`Você foi convidado para o nosso casamento! ${url}`)}`;
 
   return el(
     'section',
     { class: 'card' },
     el('h2', {}, '6. Link do convite'),
-    el('div', { class: 'link-box' }, linkInput, copyButton),
+    el('div', { class: 'link-box' }, linkInput, copyButton, newLinkButton),
+    status,
     error,
     el(
       'div',

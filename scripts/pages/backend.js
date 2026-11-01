@@ -171,6 +171,10 @@ async function route(path, method, body) {
     w.published = body?.published === false ? 0 : 1;
     return w;
   }
+  if (rest === '/new-link') {
+    if (w.slug !== SEED_SLUG) w.slug = makeSlug(w);
+    return w;
+  }
   if (rest === '/theme') return (w.theme = body);
   if (rest === '/cover') {
     w.cover_image = w.photos.find((photo) => photo.id === body?.photo_id)?.url ?? '';

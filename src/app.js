@@ -94,6 +94,7 @@ export function createApp({ db, adminPassword, trustProxy = false }) {
     deletePhoto: db.prepare('DELETE FROM photos WHERE id = ? AND wedding_id = ?'),
     photoFile: db.prepare(`
       SELECT p.mime, p.data, w.published FROM photos p JOIN weddings w ON w.id = p.wedding_id WHERE p.id = ?`),
+    setSlug: db.prepare('UPDATE weddings SET slug = ? WHERE id = ?'),
     setPublished: db.prepare('UPDATE weddings SET published = ? WHERE id = ?'),
     deleteWedding: db.prepare('DELETE FROM weddings WHERE id = ?'),
     items: db.prepare('SELECT * FROM items WHERE wedding_id = ? ORDER BY id'),
@@ -227,6 +228,11 @@ export function createApp({ db, adminPassword, trustProxy = false }) {
 
   admin.post('/weddings/:weddingId/publish', (req, res) => {
     sql.setPublished.run(req.body?.published === false ? 0 : 1, req.wedding.id);
+    res.json(sql.wedding.get(req.wedding.id));
+  });
+
+  admin.post('/weddings/:weddingId/new-link', (req, res) => {
+    sql.setSlug.run(makeSlug(req.wedding.partner1, req.wedding.partner2), req.wedding.id);
     res.json(sql.wedding.get(req.wedding.id));
   });
 
